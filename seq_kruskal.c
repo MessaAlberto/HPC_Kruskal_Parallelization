@@ -54,8 +54,7 @@ Edge* read_graph(int* V, int* E) {
   }
 
   // Read the number of vertices
-  fscanf(fp, "%d", V);
-  *E = (*V) * ((*V) - 1) / 2;
+  fscanf(fp, "%d %d", V, E);
   Edge* graph = (Edge*)malloc(sizeof(Edge) * (*E));
 
   if (graph == NULL) {
