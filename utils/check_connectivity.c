@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 // DFS
 void DFS(int* adj_matrix, int v, int* visited, int node) {
@@ -42,19 +43,23 @@ int is_connected(int* adj_matrix, int v) {
   return 1;
 }
 
-int main() {
+int main(int argc, char* argv[]) {
   int V, E;
-
-  // Read the graph from the file
   FILE* fp;
-  const char* in_file = "graph.txt";
 
-  if ((fp = fopen(in_file, "r")) == NULL) {
-    printf("Unable to open file %s for reading.\n", in_file);
+  if (argc < 2) {
+    printf("Usage: %s ../graphs/<input_file>\n", argv[0]);
     return 1;
   }
 
-  // Read the number of vertices
+  char* filename = argv[1];
+
+  if ((fp = fopen(filename, "r")) == NULL) {
+    printf("Unable to open file %s for reading.\n", filename);
+    return 1;
+  }
+
+  // Read the number of vertices and edges
   fscanf(fp, "%d %d", &V, &E);
 
   // Allocate memory for the adjacency matrix
@@ -74,7 +79,8 @@ int main() {
 
   // Read the edges from the file
   int u, w, z;
-  while (fscanf(fp, "%d %d %d", &u, &w, &z) != EOF) {
+  for (int i = 0; i < E; i++) {
+    fscanf(fp, "%d %d %d", &u, &w, &z);
     *(adj_matrix + u * V + w) = 1;
     *(adj_matrix + w * V + u) = 1;
   }

@@ -1,56 +1,6 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <time.h>
+#include "graph_gen_utils.h"
 
-void open_file(FILE** fp, const char* filename, const char* mode) {
-  if ((*fp = fopen(filename, mode)) == NULL) {
-    printf("Unable to open file %s for writing.\n", filename);
-    exit(1);
-  }
-}
-
-void get_params(int* V, int* max_wgt) {
-  printf("Number of vertices: ");
-  scanf("%d", V);
-
-  if (*V <= 0) {
-    printf("Number of vertices must be greater than 0.\n");
-    exit(1);
-  }
-
-  printf("Maximum weight: ");
-  scanf("%d", max_wgt);
-
-  if (*max_wgt <= 0) {
-    printf("Maximum weight must be greater than 0.\n");
-    exit(1);
-  }
-}
-
-long long random_num_gen(long long min, long long max) {
-    long long range = (long long)(max - min + 1);
-    long long rand_val;
-
-    do {
-        rand_val = ((long long)rand() << 16) + rand();
-    } while (rand_val >= (RAND_MAX * RAND_MAX) / range * range);
-
-    return (long long)(min + (rand_val % range));
-}
-
-void shuffle(int* nodes, int v) {
-  for (int i = 0; i < v; i++) {
-    int j = rand() % v;
-    int temp = nodes[i];
-    nodes[i] = nodes[j];
-    nodes[j] = temp;
-  }
-}
-
-double calculate_connecteness(int V, int more_edges) {
-  return ((double)(V - 1) + more_edges) / (V * (V - 1) / 2) * 100;
-}
-
+// Add random edges to the graph
 void add_random_edges(int* adj_matrix, int V, int more_edges, int max_wgt, FILE* fp) {
   int i = 0;
   while (i < more_edges) {
@@ -67,17 +17,10 @@ void add_random_edges(int* adj_matrix, int V, int more_edges, int max_wgt, FILE*
   }
 }
 
-void generate_graph(int V, int max_wgt, FILE* fp) {
+// Generate a connected graph
+void generate_graph(int V, int more_edges, int max_wgt, FILE* fp) {
   int* nodes = (int*)malloc(sizeof(int) * V);
   int* adj_matrix = (int*)calloc(V * V, sizeof(int));
-
-	// Add random number of edges
-	srand(time(NULL));
-	int more_edges = random_num_gen(V - 1, V * (V - 1) / 2);
-	printf("Total edges: %d\n", V - 1 + more_edges);
-	
-	// Percentage of connecteness
-  printf("Connecteness: %.2f%%\n", calculate_connecteness(V, more_edges));
 
   if (!nodes || !adj_matrix) {
     printf("Memory allocation failed.\n");
@@ -93,7 +36,6 @@ void generate_graph(int V, int max_wgt, FILE* fp) {
   shuffle(nodes, V);
 
   fprintf(fp, "%d %d\n", V, (V - 1) + more_edges);
-  fprintf(fp, "%d %d %d\n", nodes[0], nodes[1], 1 + rand() % max_wgt);
 
   // Connect all nodes
   for (int i = 1; i < V; i++) {
@@ -114,15 +56,25 @@ void generate_graph(int V, int max_wgt, FILE* fp) {
   free(nodes);
 }
 
-int main() {
+int main(int argc, char* argv[]) {
   int V, max_wgt;
-  const char* filename = "../graph.txt";
+  char filename[100];
   FILE* fp;
 
-  open_file(&fp, filename, "w");
-  get_params(&V, &max_wgt);
+  get_params(argc, argv, &V, &max_wgt);
 
-  generate_graph(V, max_wgt, fp);
+	srand(time(NULL));
+	// Add random number of edges to the already connected graph
+  int more_edges = random_num_gen(1, V * (V - 1) / 2 - (V - 1));
+  double density = calculate_density(V, V - 1 + more_edges);
+
+  // Generate filename with number of nodes and density
+  sprintf(filename, "../graphs/graph_%d_nodes_%.2f_density.txt", V, density);
+
+  open_file(&fp, filename, "w");
+  generate_graph(V, more_edges, max_wgt, fp);
+
+  printf("Graph with %d vertices and %.2f density generated.\n", V, density);
 
   fclose(fp);
   return 0;
