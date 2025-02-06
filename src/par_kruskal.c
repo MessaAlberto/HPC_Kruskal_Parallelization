@@ -193,7 +193,6 @@ int main(int argc, char* argv[]) {
   if (rank == 0) {
     read_input(argc, argv, &graph, &V, &E, &fp);
     create_output_filename(argv[1], "mpi_mst_", &output_filename);
-    printf("output_filename: %s\n", output_filename);
     qsort(graph, E, sizeof(Edge), compare_edges);
   }
 
