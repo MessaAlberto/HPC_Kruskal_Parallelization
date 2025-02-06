@@ -18,8 +18,7 @@ void create_mpi_edge_type() {
   MPI_Type_commit(&MPI_EDGE);
 }
 
-void read_input(int argc, char* argv[], Edge** graph, int* V, int* E,
-                FILE** fp) {
+void read_input(int argc, char* argv[], Edge** graph, int* V, int* E) {
   if (argc < 2) {
     printf("Usage: %s <input_file>\n", argv[0]);
     MPI_Abort(MPI_COMM_WORLD, 1);
@@ -29,12 +28,6 @@ void read_input(int argc, char* argv[], Edge** graph, int* V, int* E,
 
   if (*graph == NULL) {
     printf("Error reading graph.\n");
-    MPI_Abort(MPI_COMM_WORLD, 1);
-  }
-
-  *fp = fopen("output.txt", "w");
-  if (*fp == NULL) {
-    printf("Error opening output file.\n");
     MPI_Abort(MPI_COMM_WORLD, 1);
   }
 }
@@ -187,11 +180,10 @@ int main(int argc, char* argv[]) {
   int V = 0, E = 0;
   int mst_weight = 0, mst_edges = 0;
   Edge* graph = NULL;
-  FILE* fp;
   char* output_filename;
 
   if (rank == 0) {
-    read_input(argc, argv, &graph, &V, &E, &fp);
+    read_input(argc, argv, &graph, &V, &E);
     create_output_filename(argv[1], "mpi_mst_", &output_filename);
     qsort(graph, E, sizeof(Edge), compare_edges);
   }
@@ -239,8 +231,6 @@ int main(int argc, char* argv[]) {
   free(local_graph);
   free(sets);
   free(local_mst);
-
-  if (rank == 0) fclose(fp);
 
   MPI_Type_free(&MPI_EDGE);
   MPI_Finalize();

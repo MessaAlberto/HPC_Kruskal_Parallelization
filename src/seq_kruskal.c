@@ -1,7 +1,7 @@
 #include "disjoint_set.h"
 #include "graph_utils.h"
 
-void read_input(int argc, char* argv[], Edge** graph, int* V, int* E, FILE** fp) {
+void read_input(int argc, char* argv[], Edge** graph, int* V, int* E) {
   if (argc < 2) {
     printf("Usage: %s <input_file>\n", argv[0]);
     exit(1);
@@ -11,12 +11,6 @@ void read_input(int argc, char* argv[], Edge** graph, int* V, int* E, FILE** fp)
 
   if (*graph == NULL) {
     printf("Error reading graph.\n");
-    exit(1);
-  }
-
-  *fp = fopen("output.txt", "w");
-  if (*fp == NULL) {
-    printf("Error opening output file.\n");
     exit(1);
   }
 }
@@ -68,10 +62,9 @@ int main(int argc, char* argv[]) {
   int V = 0, E = 0;
   int mst_weight = 0, mst_edges = 0;
   Edge* graph = NULL;
-  FILE* fp;
   char* output_filename;
 
-  read_input(argc, argv, &graph, &V, &E, &fp);
+  read_input(argc, argv, &graph, &V, &E);
   create_output_filename(argv[1], "seq_mst_", &output_filename);
 
   Edge* mst = kruskal(graph, V, E, &mst_weight, &mst_edges);
@@ -89,7 +82,6 @@ int main(int argc, char* argv[]) {
   }
 
   fclose(out_fp);
-  fclose(fp);
   free(graph);
   free(mst);
   free(output_filename);
