@@ -47,6 +47,11 @@ int compare_edges(const void* a, const void* b) {
 void create_output_filename(char* input_filename, char* prefix, char** output_filename) { 
   char* base_name = basename(input_filename); 
 
+  char* graph_pos = strstr(base_name, "graph_");
+  if (graph_pos != NULL) {
+    base_name = graph_pos + 6;
+  }
+
   *output_filename = (char*)malloc(strlen(base_name) + strlen(prefix) + strlen("../mst/") + 5);
   if (*output_filename == NULL) {
     printf("Memory allocation failed.\n");

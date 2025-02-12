@@ -1,5 +1,10 @@
+#include <sys/time.h>
+
 #include "disjoint_set.h"
 #include "graph_utils.h"
+
+struct timeval qsort_start_time, qsort_end_time;
+struct timeval alg_start_time, alg_end_time;
 
 void read_input(int argc, char* argv[], Edge** graph, int* V, int* E) {
   if (argc < 2) {
@@ -16,8 +21,10 @@ void read_input(int argc, char* argv[], Edge** graph, int* V, int* E) {
 }
 
 Edge* kruskal(Edge* graph, int V, int E, int* mst_weight, int* mst_edges) {
+  gettimeofday(&qsort_start_time, NULL);
   // Sort the edges
   qsort(graph, E, sizeof(Edge), compare_edges);
+  gettimeofday(&qsort_end_time, NULL);
 
   // Union-Find data structure
   Subset* sets = (Subset*)malloc(sizeof(Subset) * V);
@@ -37,7 +44,7 @@ Edge* kruskal(Edge* graph, int V, int E, int* mst_weight, int* mst_edges) {
   *mst_weight = 0;
   *mst_edges = 0;
 
-  for (int i = 0; i < E && *mst_edges < V - 1; i++) {
+  for (int i = 0; *mst_edges < V - 1 && i < E; i++) {
     int u = graph[i].u;
     int v = graph[i].v;
 
@@ -54,7 +61,7 @@ Edge* kruskal(Edge* graph, int V, int E, int* mst_weight, int* mst_edges) {
     }
   }
 
-  free(sets); 
+  free(sets);
   return mst;
 }
 
@@ -67,7 +74,9 @@ int main(int argc, char* argv[]) {
   read_input(argc, argv, &graph, &V, &E);
   create_output_filename(argv[1], "seq_mst_", &output_filename);
 
+  gettimeofday(&alg_start_time, NULL);
   Edge* mst = kruskal(graph, V, E, &mst_weight, &mst_edges);
+  gettimeofday(&alg_end_time, NULL);
 
   // Output file
   FILE* out_fp = fopen(output_filename, "w");
@@ -80,6 +89,19 @@ int main(int argc, char* argv[]) {
   for (int i = 0; i < mst_edges; i++) {
     fprintf(out_fp, "%d %d %d\n", mst[i].u, mst[i].v, mst[i].weight);
   }
+
+  // Print timing information
+  printf("Qsort time: %.6f seconds\n",
+         (qsort_end_time.tv_sec - qsort_start_time.tv_sec) +
+             (qsort_end_time.tv_usec - qsort_start_time.tv_usec) / 1000000.0);
+
+  printf("Kruskal time: %.6f seconds\n",
+         (alg_end_time.tv_sec - qsort_end_time.tv_sec) +
+             (alg_end_time.tv_usec - qsort_end_time.tv_usec) / 1000000.0);
+
+  printf("Tot algorithm time: %.6f seconds\n",
+         (alg_end_time.tv_sec - alg_start_time.tv_sec) +
+             (alg_end_time.tv_usec - alg_start_time.tv_usec) / 1000000.0);
 
   fclose(out_fp);
   free(graph);
