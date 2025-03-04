@@ -4,4 +4,8 @@
 #PBS -q short_cpuQ
 #PBS -l walltime=00:10:00
 
-mpiexec -n 128 ./cluster/kruskal $V
+module load mpich-3.2
+
+DIR=${PBS_O_WORKDIR}
+
+mpiexec -n 128 "${PBS_O_WORKDIR}/kruskal" $V

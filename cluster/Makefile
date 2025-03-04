@@ -10,17 +10,14 @@ OBJS = $(SRC:.c=.o)
 
 all: env test
 
-env: create_output_dir module_load $(OUTPUT)
+env: create_output_dir $(OUTPUT)
 	chmod +x test.sh qsub_dir.sh
 
 create_output_dir:
 	mkdir -p $(OUTPUT_DIR) $(ERROR_DIR)
 
-module_load:
-	$(SHELL) -l -c "module load mpich-3.2"
-
 $(OUTPUT): $(OBJS)
-	$(CC) $(CFLAGS) -o $(OUTPUT) $(OBJS) -lm
+	$(CC) $(CFLAGS) -o $@ $^
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
