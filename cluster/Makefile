@@ -17,10 +17,10 @@ create_output_dir:
 	mkdir -p $(OUTPUT_DIR) $(ERROR_DIR)
 
 $(OUTPUT): $(OBJS)
-	$(CC) $(CFLAGS) -o $@ $^
+	module load mpich-3.2 && $(CC) $(CFLAGS) -o $@ $^ -lm
 
 %.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
+	module load mpich-3.2 && $(CC) $(CFLAGS) -c $< -o $@
 
 test: 
 	./test.sh

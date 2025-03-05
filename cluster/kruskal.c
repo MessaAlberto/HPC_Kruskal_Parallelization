@@ -216,8 +216,6 @@ void distibute_data(Edge* graph, Edge** local_graph, int E, int* send_counts, in
                     int nproc, int rank, MPI_Comm active_comm) {
   if (E < nproc) {
     printf("Error: more processes than edges.\n");
-    printf("E: %d, nproc: %d\n", E, nproc);
-    fflush(stdout);
     MPI_Abort(MPI_COMM_WORLD, 1);
   }
 
@@ -569,7 +567,7 @@ int main(int argc, char* argv[]) {
     print_field(times, algo_times, "Collect Time:", get_collect_time);
     print_field(times, algo_times, "Total Time:", get_total_time);
 
-    print_evaluation(times, algo_times);
+    print_evaluation(times, algo_times);    
   }
 
   free(graph);
