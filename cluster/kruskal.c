@@ -1,4 +1,6 @@
+#include <inttypes.h>
 #include <libgen.h>
+#include <limits.h>
 #include <math.h>
 #include <mpi.h>
 #include <stddef.h>
@@ -98,7 +100,7 @@ void complete_graph(Edge** graph, int V, int max_wgt) {
     MPI_Abort(MPI_COMM_WORLD, 1);
   }
 
-  int edge_count = 0;
+  int64_t edge_count = 0;
   for (int i = 0; i < V; i++) {
     for (int j = i + 1; j < V; j++) {
       (*graph)[edge_count].u = i;
@@ -110,23 +112,23 @@ void complete_graph(Edge** graph, int V, int max_wgt) {
 }
 
 // Calculate the number of missing edges to reach the desired density
-// With number of vertices V minor than 20, the
-int calculate_missing_edges(int V, int density) {
-  int max_edges = V * (V - 1) / 2;
+int64_t calculate_missing_edges(int V, int density) {
+  int64_t max_edges = (int64_t)V * (V - 1) / 2;
   float density_factor = density / 10.0;
-  int density_edges = (int)(max_edges * density_factor);
-  return density_edges - (V - 1);
+  int64_t density_edges = (int64_t)(max_edges * density_factor);
+  return density_edges - (int64_t)(V - 1);
 }
 
 void sparse_graph(Edge** graph, int V, int density, int max_wgt) {
-  int more_edges = calculate_missing_edges(V, density);
+  int64_t more_edges = calculate_missing_edges(V, density);
 
   *graph = (Edge*)malloc(sizeof(Edge) * (V - 1 + more_edges));
   int* nodes = (int*)malloc(sizeof(int) * V);
-  int* adj_matrix = (int*)calloc(V * V, sizeof(int));
+  uint8_t* adj_matrix = (uint8_t*)calloc((int64_t)V * V, sizeof(uint8_t));
 
-  if (!graph || !nodes || !adj_matrix) {
+  if (!(*graph) || !nodes || !adj_matrix) {
     printf("Memory allocation failed for sparse graph.\n");
+    fflush(stdout);
     MPI_Abort(MPI_COMM_WORLD, 1);
   }
 
@@ -144,7 +146,7 @@ void sparse_graph(Edge** graph, int V, int density, int max_wgt) {
   }
 
   // Connect all nodes
-  int edge_count = 0;
+  int64_t edge_count = 0;
   for (int i = 1; i < V; i++) {
     int u = nodes[i];
     int v = nodes[rand() % i];
@@ -155,12 +157,12 @@ void sparse_graph(Edge** graph, int V, int density, int max_wgt) {
     (*graph)[edge_count].weight = w;
     edge_count++;
 
-    adj_matrix[u * V + v] = 1;
-    adj_matrix[v * V + u] = 1;
+    adj_matrix[(int64_t)u * V + v] = 1;
+    adj_matrix[(int64_t)v * V + u] = 1;
   }  // All nodes are now connected
 
   // Add more edges to reach the desired density
-  int i = 0;
+  int64_t i = 0;
   while (i < more_edges) {
     int u = rand() % V;
     int v = rand() % V;
@@ -172,8 +174,8 @@ void sparse_graph(Edge** graph, int V, int density, int max_wgt) {
       (*graph)[edge_count].weight = w;
       edge_count++;
 
-      adj_matrix[u * V + v] = 1;
-      adj_matrix[v * V + u] = 1;
+      adj_matrix[(int64_t)u * V + v] = 1;
+      adj_matrix[(int64_t)v * V + u] = 1;
       i++;
     }
   }
@@ -182,7 +184,7 @@ void sparse_graph(Edge** graph, int V, int density, int max_wgt) {
   free(nodes);
 }
 
-void kruskal(Edge* graph, int V, int E, Edge** mst, int* mst_edges, int* mst_weight,
+void kruskal(Edge* graph, int V, int64_t E, Edge** mst, int* mst_edges, int* mst_weight,
              Subset* sets) {
   for (int i = 0; i < V; i++) {
     sets[i].parent = i;
@@ -191,10 +193,15 @@ void kruskal(Edge* graph, int V, int E, Edge** mst, int* mst_edges, int* mst_wei
 
   // MST data structure
   *mst = (Edge*)malloc(sizeof(Edge) * (V - 1));
+  if (*mst == NULL) {
+    printf("Memory allocation failed for MST.\n");
+    MPI_Abort(MPI_COMM_WORLD, 1);
+  }
+
   *mst_weight = 0;
   *mst_edges = 0;
 
-  for (int i = 0; i < E; i++) {
+  for (int64_t i = 0; i < E; i++) {
     int u = graph[i].u;
     int v = graph[i].v;
 
@@ -212,15 +219,20 @@ void kruskal(Edge* graph, int V, int E, Edge** mst, int* mst_edges, int* mst_wei
   }
 }
 
-void distibute_data(Edge* graph, Edge** local_graph, int E, int* send_counts, int* displs,
+void distibute_data(Edge* graph, Edge** local_graph, int64_t E, int* send_counts, int* displs,
                     int nproc, int rank, MPI_Comm active_comm) {
   if (E < nproc) {
     printf("Error: more processes than edges.\n");
     MPI_Abort(MPI_COMM_WORLD, 1);
   }
 
-  int base_size = E / nproc;
-  int extra = E % nproc;
+  int64_t base_size = E / nproc;
+  int64_t extra = E % nproc;
+  if (base_size + extra > INT_MAX) {
+    printf("Error: data is too large to distribute.\n");
+    fflush(stdout);
+    MPI_Abort(MPI_COMM_WORLD, 1);
+  }
 
   int offset = 0;
   for (int i = 0; i < nproc; i++) {
@@ -259,7 +271,6 @@ void collect_mst(int rank, int nproc, int V, Edge** local_mst, int* mst_edges, i
 
       if (recv_mst == NULL) {
         printf("Memory allocation failed for received MST.\n");
-        fflush(stdout);
         MPI_Abort(MPI_COMM_WORLD, 1);
       }
 
@@ -282,7 +293,6 @@ void collect_mst(int rank, int nproc, int V, Edge** local_mst, int* mst_edges, i
       free(recv_mst);
     } else {
       int send_rank = rank - power;
-
       MPI_Send(mst_edges, 1, MPI_INT, send_rank, 0, active_comm);
       MPI_Send(*local_mst, *mst_edges, MPI_EDGE, send_rank, 0, active_comm);
 
@@ -315,7 +325,7 @@ void print_field(AlgoTimes times[10][10], int algo_times, const char* field_name
 void print_evaluation(AlgoTimes times[10][10], int algo_times) {
   printf("\n========= Task Evaluation on complete graph (%% of Total Time) =========\n");
   printf(" nproc\n");
-  
+
   for (int i = 0; i < algo_times; i++) {
     printf("  %3d   ", (int)pow(2, i));
     double total = times[i][9].total_time;
@@ -371,7 +381,8 @@ int main(int argc, char* argv[]) {
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
   create_mpi_edge_type();
-  int V = 0, E = 0;
+  int V = 0;
+  int64_t E = 0;
   int mst_weight = 0, mst_edges = 0;
   Edge* graph = NULL;
   Edge* original_graph = NULL;
@@ -567,7 +578,7 @@ int main(int argc, char* argv[]) {
     print_field(times, algo_times, "Collect Time:", get_collect_time);
     print_field(times, algo_times, "Total Time:", get_total_time);
 
-    print_evaluation(times, algo_times);    
+    print_evaluation(times, algo_times);
   }
 
   free(graph);
