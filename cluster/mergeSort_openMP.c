@@ -176,10 +176,14 @@ void print_evaluation(double times[10][10], int algo_times) {
 }
 
 int cmpfunc(const void* a, const void* b) {
-  return (*(Edge*)a).weight - (*(Edge*)b).weight;
+  const Edge* edgeA = (const Edge*)a;
+  const Edge* edgeB = (const Edge*)b;
+  if (edgeA->weight < edgeB->weight) return -1;
+  if (edgeA->weight > edgeB->weight) return 1;
+  return 0;
 }
 
-void merge(Edge** graph, int64_t l, int64_t m, int64_t r) {
+void merge(Edge* graph, int64_t l, int64_t m, int64_t r) {
   Edge* tmp = (Edge*)malloc(sizeof(Edge) * (r - l + 1));
   if (!tmp) {
     printf("Memory allocation failed for merge.\n");
@@ -189,29 +193,29 @@ void merge(Edge** graph, int64_t l, int64_t m, int64_t r) {
   int64_t i = l, j = m + 1, k = 0;
 
   while (i <= m && j <= r) {
-    tmp[k++] = (*graph)[i].weight <= (*graph)[j].weight ? (*graph)[i++] : (*graph)[j++];
+    tmp[k++] = (graph[i].weight <= graph[j].weight) ? graph[i++] : graph[j++];
   }
 
-  while (i <= m) tmp[k++] = (*graph)[i++];
-  while (j <= r) tmp[k++] = (*graph)[j++];
+  while (i <= m) tmp[k++] = graph[i++];
+  while (j <= r) tmp[k++] = graph[j++];
 
   for (i = l, k = 0; i <= r; i++, k++) {
-    (*graph)[i] = tmp[k];
+    graph[i] = tmp[k];
   }
 
   free(tmp);
 }
 
-void mergeSortParallel(Edge** graph, int64_t E) {
+void mergeSortParallel(Edge* graph, int64_t E) {
   int64_t curr_size, start;
   int num_threads = omp_get_max_threads();
   int64_t block_size = E / num_threads;
 
-  #pragma omp parallel for shared(graph, num_threads, block_size)
+  #pragma omp parallel for
   for (int64_t i = 0; i < num_threads; i++) {
     int64_t start = i * block_size;
     int64_t end = (i == num_threads - 1) ? E - 1 : start + block_size - 1;
-    qsort(*graph + start, (size_t)(end - start + 1), sizeof(Edge), cmpfunc);
+    qsort(graph + start, (size_t)(end - start + 1), sizeof(Edge), cmpfunc);
   }
 
   for (curr_size = block_size; curr_size <= E; curr_size *= 2) {
@@ -220,7 +224,7 @@ void mergeSortParallel(Edge** graph, int64_t E) {
       int64_t mid = start + curr_size - 1;
       int64_t end = (start + 2 * curr_size - 1 < E) ? start + 2 * curr_size - 1 : E - 1;
 
-      if (mid < E && (*graph)[mid].weight > (*graph)[mid + 1].weight) {
+      if (mid < E && graph[mid].weight > graph[mid + 1].weight) {
         merge(graph, start, mid, end);
       }
     }
@@ -270,6 +274,8 @@ int main(int argc, char* argv[]) {
       printf("Memory allocation failed for original graph.\n");
       return 1;
     }
+
+    memcpy(original_graph, graph, sizeof(Edge) * E);
     
     // Iterate the number of processes, increasing by powers of 2 (1, 2, 4, 8, ...)
     for (int j = 1; j <= nproc; j *= 2) {
@@ -285,7 +291,7 @@ int main(int argc, char* argv[]) {
       fflush(stdout);
     
       start = omp_get_wtime();
-      mergeSortParallel(&graph, E);
+      mergeSortParallel(graph, E);
       end = omp_get_wtime();
 
       for (int64_t k = 1; k < E; k++) {
