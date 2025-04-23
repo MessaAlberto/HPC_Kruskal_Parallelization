@@ -2,9 +2,9 @@ OUTPUT_DIR = ../output
 ERROR_DIR = ../output_err
 
 CC = mpicc
-CFLAGS = -Wall -Wextra -g -std=c99
+CFLAGS = -Wall -Wextra -g -std=c99 -fopenmp
 
-OUTPUT = kruskal
+OUTPUT = kruskal.out
 SRC = kruskal.c
 OBJS = $(SRC:.c=.o)
 
