@@ -1,3 +1,7 @@
+/******************************/
+/*   INCLUDES & DEFINES       */
+/******************************/
+
 #include <inttypes.h>
 #include <libgen.h>
 #include <limits.h>
@@ -8,7 +12,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <omp.h>
+
+#define DENSITY_START 1  // 10% density
+#define DENSITY_END 10   // 100% density
+
+/******************************/
+/*   TYPEDEFS & GLOBAL DATA   */
+/******************************/
 
 typedef struct Edge {
   int u;
@@ -30,6 +40,14 @@ typedef struct AlgoTimes {
   double collect_mst_time;
   double total_time;
 } AlgoTimes;
+
+double total_start_time, total_end_time;
+double distribute_unordered_start, distribute_unordered_end;
+double qsort_start, qsort_end;
+double merge_graph_start, merge_graph_end;
+double distribute_ordered_start, distribute_ordered_end;
+double kruskal_execution_start, kruskal_execution_end;
+double collect_mst_start, collect_mst_end;
 
 typedef double (*FieldGetter)(AlgoTimes*);
 
@@ -53,30 +71,6 @@ double get_total_time(AlgoTimes* times) { return times->total_time; }
 
 MPI_Datatype MPI_EDGE;
 
-int compare_edges(const void* a, const void* b) {
-  return ((Edge*)a)->weight - ((Edge*)b)->weight;
-}
-
-// Find the root of the set
-int find(Subset* sets, int i) {
-  if (sets[i].parent != i) {
-    sets[i].parent = find(sets, sets[i].parent);
-  }
-  return sets[i].parent;
-}
-
-// Union two sets
-void union_sets(Subset* sets, int root_u, int root_v) {
-  if (sets[root_u].rank < sets[root_v].rank) {
-    sets[root_u].parent = root_v;
-  } else if (sets[root_u].rank > sets[root_v].rank) {
-    sets[root_v].parent = root_u;
-  } else {
-    sets[root_v].parent = root_u;
-    sets[root_u].rank++;
-  }
-}
-
 void create_mpi_edge_type() {
   int block_lengths[3] = {1, 1, 1};
   MPI_Datatype types[3] = {MPI_INT, MPI_INT, MPI_INT};
@@ -89,6 +83,89 @@ void create_mpi_edge_type() {
   MPI_Type_create_struct(3, block_lengths, offsets, types, &MPI_EDGE);
   MPI_Type_commit(&MPI_EDGE);
 }
+
+/******************************/
+/*   TIMING & OUTPUT          */
+/******************************/
+
+void print_field(AlgoTimes times[10][10], int algo_times, const char* field_name,
+                 FieldGetter field) {
+  printf("%s\n", field_name);
+  printf(" nproc  ");
+  for (int i = DENSITY_START; i <= DENSITY_END; i++) {
+    printf("| %6d%%    ", i * 10);
+  }
+  printf("\n");
+
+  for (int i = 0; i < algo_times; i++) {
+    printf("  %3d   ", (int)pow(2, i));
+    for (int j = DENSITY_START - 1; j < DENSITY_END; j++) {
+      printf("| %10.8f ", field(&times[i][j]));
+    }
+    printf("\n");
+  }
+  printf("\n");
+}
+
+void print_evaluation(AlgoTimes times[10][10], int algo_times) {
+  printf("\n========= Task Evaluation on complete graph (%% of Total Time) =========\n");
+  printf(" nproc\n");
+
+  for (int i = 0; i < algo_times; i++) {
+    printf("  %3d   ", (int)pow(2, i));
+    double total = times[i][9].total_time;
+
+    double distribute_unordered_percentage =
+        (times[i][9].distribute_unordered_graph_time / total) * 100.0;
+    double qsort_percentage = (times[i][9].qsort_time / total) * 100.0;
+    double merge_graph_percentage = (times[i][9].merge_graph_time / total) * 100.0;
+    double distribute_ordered_percentage =
+        (times[i][9].distribute_ordered_graph_time / total) * 100.0;
+    double kruskal_percentage = (times[i][9].kruskal_time / total) * 100.0;
+    double collect_mst_percentage = (times[i][9].collect_mst_time / total) * 100.0;
+
+    printf("| DUG %6.2f%% | QS %6.2f%% | MG %6.2f%% | DOG %6.2f%% | K %6.2f%% | CM %6.2f%%\n",
+           distribute_unordered_percentage, qsort_percentage, merge_graph_percentage,
+           distribute_ordered_percentage, kruskal_percentage, collect_mst_percentage);
+  }
+  printf("\n========= Speedup =========\n");
+  printf(" nproc  ");
+  for (int i = DENSITY_START; i <= DENSITY_END; i++) {
+    printf("| %6d%%    ", i * 10);
+  }
+  printf("\n");
+
+  for (int i = 0; i < algo_times; i++) {
+    printf("  %3d   ", (int)pow(2, i));
+    for (int j = DENSITY_START - 1; j < DENSITY_END; j++) {
+      double speedup = times[0][j].total_time / times[i][j].total_time;
+      printf("| %10.8f ", speedup);
+    }
+    printf("\n");
+  }
+  printf("\n");
+
+  printf("\n========= Efficiency =========\n");
+  printf(" nproc  ");
+  for (int i = DENSITY_START; i <= DENSITY_END; i++) {
+    printf("| %6d%%    ", i * 10);
+  }
+  printf("\n");
+
+  for (int i = 0; i < algo_times; i++) {
+    printf("  %3d   ", (int)pow(2, i));
+    for (int j = DENSITY_START - 1; j < DENSITY_END; j++) {
+      double efficiency = (times[0][j].total_time / times[i][j].total_time) / pow(2, i);
+      printf("| %10.8f ", efficiency);
+    }
+    printf("\n");
+  }
+  printf("\n");
+}
+
+/******************************/
+/*   GRAPH GENERATION         */
+/******************************/
 
 void get_argv(int argc, char* argv[], int* V) {
   if (argc != 2) {
@@ -154,7 +231,7 @@ void sparse_graph(Edge** graph, int V, int density, int max_wgt) {
     nodes[i] = nodes[j];
     nodes[j] = temp;
   }
-  
+
   // Connect all nodes
   int64_t edge_count = 0;
   for (int i = 1; i < V; i++) {
@@ -194,6 +271,34 @@ void sparse_graph(Edge** graph, int V, int density, int max_wgt) {
   free(nodes);
 }
 
+/******************************/
+/*   KRUSKAL & UNION-FIND     */
+/******************************/
+
+int compare_edges(const void* a, const void* b) {
+  return ((Edge*)a)->weight - ((Edge*)b)->weight;
+}
+
+// Find the root of the set
+int find(Subset* sets, int i) {
+  if (sets[i].parent != i) {
+    sets[i].parent = find(sets, sets[i].parent);
+  }
+  return sets[i].parent;
+}
+
+// Union two sets
+void union_sets(Subset* sets, int root_u, int root_v) {
+  if (sets[root_u].rank < sets[root_v].rank) {
+    sets[root_u].parent = root_v;
+  } else if (sets[root_u].rank > sets[root_v].rank) {
+    sets[root_v].parent = root_u;
+  } else {
+    sets[root_v].parent = root_u;
+    sets[root_u].rank++;
+  }
+}
+
 void kruskal(Edge* graph, int V, int64_t E, Edge** mst, int* mst_edges, int* mst_weight,
              Subset* sets) {
   for (int i = 0; i < V; i++) {
@@ -229,8 +334,12 @@ void kruskal(Edge* graph, int V, int64_t E, Edge** mst, int* mst_edges, int* mst
   }
 }
 
+/******************************/
+/*  DISTRIBUTION & MERGING    */
+/******************************/
+
 void distribute_data(Edge* graph, Edge** local_graph, int64_t E, int64_t* send_counts,
-                    int64_t* displs, int nproc, int rank, MPI_Comm active_comm) {
+                     int64_t* displs, int nproc, int rank, MPI_Comm active_comm) {
   if (E < nproc) {
     printf("Error: more processes than edges.\n");
     MPI_Abort(MPI_COMM_WORLD, 1);
@@ -261,7 +370,7 @@ void distribute_data(Edge* graph, Edge** local_graph, int64_t E, int64_t* send_c
       printf("Distribution in multiple batches...\n");
       fflush(stdout);
     }
-  
+
     // Max number of edges to send to each process for each MPI_Scatterv
     int batch_size = INT_MAX / nproc;
     // Number of batches
@@ -304,7 +413,8 @@ void distribute_data(Edge* graph, Edge** local_graph, int64_t E, int64_t* send_c
       }
     }
 
-    // Due to MPI_Scatterv limitations(send_count must be int), we need to send the data in multiple batches
+    // Due to MPI_Scatterv limitations(send_count must be int), we need to send the data in
+    // multiple batches
     for (int batch = 0; batch < num_batches; batch++) {
       int64_t start_pos = (int64_t)batch * batch_size * nproc;
       int64_t end_pos = start_pos + batch_size * nproc;
@@ -320,7 +430,8 @@ void distribute_data(Edge* graph, Edge** local_graph, int64_t E, int64_t* send_c
       }
 
       MPI_Scatterv(ordered_graph + start_pos, send_counts_int, displs_int, MPI_EDGE,
-                   *local_graph + batch_size * (int64_t)batch, send_counts_int[rank], MPI_EDGE, 0, active_comm);
+                   *local_graph + batch_size * (int64_t)batch, send_counts_int[rank], MPI_EDGE,
+                   0, active_comm);
 
       if (*local_graph == NULL) {
         printf("Error distributing data.\n");
@@ -337,8 +448,8 @@ void distribute_data(Edge* graph, Edge** local_graph, int64_t E, int64_t* send_c
       displs_int[i] = (int)displs[i];
     }
 
-    MPI_Scatterv(graph, send_counts_int, displs_int, MPI_EDGE, *local_graph, send_counts_int[rank],
-                 MPI_EDGE, 0, active_comm);
+    MPI_Scatterv(graph, send_counts_int, displs_int, MPI_EDGE, *local_graph,
+                 send_counts_int[rank], MPI_EDGE, 0, active_comm);
 
     if (*local_graph == NULL) {
       printf("Error distributing data.\n");
@@ -350,69 +461,54 @@ void distribute_data(Edge* graph, Edge** local_graph, int64_t E, int64_t* send_c
   free(displs_int);
 }
 
-int64_t pivot_sort(Edge* graph, Edge** local_graph, int64_t E, int nproc, int rank, MPI_Comm active_comm, int max_wgt) {
-    int64_t local_edge_count = 0;
+void merge_graph(Edge** local_graph, int64_t send_counts, int nproc, int rank,
+                 MPI_Comm active_comm) {
+  int power = 1;
+  while (nproc > 1) {
+    if ((rank / power) % 2 == 0) {
+      int recv_rank = rank + power;
+      int recv_count = 0;
 
-    if (rank == 0) {
-        printf("Performing pivot sort with %d processes...\n", nproc);
-        fflush(stdout);
+      MPI_Recv(&recv_count, 1, MPI_INT, recv_rank, 0, active_comm, MPI_STATUS_IGNORE);
 
-        int64_t bucket_width = max_wgt / nproc;
-        if (bucket_width == 0) bucket_width = 1;
+      Edge* recv_graph = (Edge*)malloc(sizeof(Edge) * recv_count);
+      if (recv_graph == NULL) {
+        printf("Memory allocation failed for received graph.\n");
+        MPI_Abort(MPI_COMM_WORLD, 1);
+      }
 
-        int64_t* counts = calloc(nproc, sizeof(int64_t));
-        for (int64_t i = 0; i < E; i++) {
-            int bucket = graph[i].weight / bucket_width;
-            if (bucket >= nproc) bucket = nproc - 1;
-            counts[bucket]++;
+      MPI_Recv(recv_graph, recv_count * sizeof(Edge), MPI_BYTE, recv_rank, 0, active_comm,
+               MPI_STATUS_IGNORE);
+      send_counts += recv_count;
+      (*local_graph) = (Edge*)realloc(*local_graph, sizeof(Edge) * send_counts);
+      if (*local_graph == NULL) {
+        printf("Memory allocation failed for local graph.\n");
+        MPI_Abort(MPI_COMM_WORLD, 1);
+      }
+
+      // Inverted merge
+      int i = send_counts - 1;
+      int j = send_counts - recv_count - 1;
+      int k = recv_count - 1;
+
+      while (k >= 0) {
+        if (j >= 0 && (*local_graph)[j].weight > recv_graph[k].weight) {
+          (*local_graph)[i--] = (*local_graph)[j--];
+        } else {
+          (*local_graph)[i--] = recv_graph[k--];
         }
-
-        int64_t* displs = calloc(nproc, sizeof(int64_t));
-        displs[0] = 0;
-        for (int i = 1; i < nproc; i++) {
-            displs[i] = displs[i - 1] + counts[i - 1];
-        }
-
-        Edge* full_buffer = malloc(E * sizeof(Edge));
-
-        int64_t* write_pos = malloc(nproc * sizeof(int64_t));
-        memcpy(write_pos, displs, nproc * sizeof(int64_t));
-
-        #pragma omp parallel for schedule(static)
-        for (int64_t i = 0; i < E; i++) {
-            int bucket = graph[i].weight / bucket_width;
-            if (bucket >= nproc) bucket = nproc - 1;
-
-            int64_t pos;
-            #pragma omp atomic capture
-            pos = write_pos[bucket]++;
-
-            full_buffer[pos] = graph[i];
-        }
-
-        for (int dest = 1; dest < nproc; dest++) {
-            MPI_Send(&counts[dest], 1, MPI_INT64_T, dest, 0, active_comm);
-            MPI_Send(full_buffer + displs[dest], counts[dest], MPI_EDGE, dest, 0, active_comm);
-        }
-
-        *local_graph = malloc(counts[0] * sizeof(Edge));
-        memcpy(*local_graph, full_buffer, counts[0] * sizeof(Edge));
-        local_edge_count = counts[0];
-
-        free(full_buffer);
-        free(counts);
-        free(displs);
-        free(write_pos);
+      }
+      free(recv_graph);
     } else {
-        MPI_Recv(&local_edge_count, 1, MPI_INT64_T, 0, 0, active_comm, MPI_STATUS_IGNORE);
-        *local_graph = malloc(local_edge_count * sizeof(Edge));
-        MPI_Recv(*local_graph, local_edge_count, MPI_EDGE, 0, 0, active_comm, MPI_STATUS_IGNORE);
+      int send_rank = rank - power;
+      MPI_Send(&send_counts, 1, MPI_INT, send_rank, 0, active_comm);
+      MPI_Send(*local_graph, send_counts * sizeof(Edge), MPI_BYTE, send_rank, 0, active_comm);
+      break;
     }
-
-    qsort(*local_graph, local_edge_count, sizeof(Edge), compare_edges);
-    return local_edge_count;
+    power *= 2;
+    nproc /= 2;
+  }
 }
-
 
 void collect_mst(int rank, int nproc, int V, Edge** local_mst, int* mst_edges, int* mst_weight,
                  Subset* sets, MPI_Comm active_comm) {
@@ -421,7 +517,7 @@ void collect_mst(int rank, int nproc, int V, Edge** local_mst, int* mst_edges, i
     if ((rank / power) % 2 == 0) {
       int recv_rank = rank + power;
       int recv_edges = 0;
-      
+
       MPI_Recv(&recv_edges, 1, MPI_INT, recv_rank, 0, active_comm, MPI_STATUS_IGNORE);
 
       Edge* recv_mst = (Edge*)calloc(recv_edges, sizeof(Edge));
@@ -461,78 +557,9 @@ void collect_mst(int rank, int nproc, int V, Edge** local_mst, int* mst_edges, i
   }
 }
 
-void print_field(AlgoTimes times[10][10], int algo_times, const char* field_name,
-                 FieldGetter field) {
-  printf("%s\n", field_name);
-  printf(" nproc  ");
-  for (int i = 0; i < 10; i++) {
-    printf("| %6d%%    ", (i + 1) * 10);
-  }
-  printf("\n");
-
-  for (int i = 0; i < algo_times; i++) {
-    printf("  %3d   ", (int)pow(2, i));
-    for (int j = 0; j < 10; j++) {
-      printf("| %10.8f ", field(&times[i][j]));
-    }
-    printf("\n");
-  }
-  printf("\n");
-}
-
-void print_evaluation(AlgoTimes times[10][10], int algo_times) {
-  printf("\n========= Task Evaluation on complete graph (%% of Total Time) =========\n");
-  printf(" nproc\n");
-
-  for (int i = 0; i < algo_times; i++) {
-    printf("  %3d   ", (int)pow(2, i));
-    double total = times[i][9].total_time;
-
-    double distribute_unordered_percentage = (times[i][9].distribute_unordered_graph_time / total) * 100.0;
-    double qsort_percentage = (times[i][9].qsort_time / total) * 100.0;
-    double merge_graph_percentage = (times[i][9].merge_graph_time / total) * 100.0;
-    double distribute_ordered_percentage = (times[i][9].distribute_ordered_graph_time / total) * 100.0;
-    double kruskal_percentage = (times[i][9].kruskal_time / total) * 100.0;
-    double collect_mst_percentage = (times[i][9].collect_mst_time / total) * 100.0;
-
-    printf("| DUG %6.2f%% | QS %6.2f%% | MG %6.2f%% | DOG %6.2f%% | K %6.2f%% | CM %6.2f%%\n",
-           distribute_unordered_percentage, qsort_percentage, merge_graph_percentage,
-           distribute_ordered_percentage, kruskal_percentage, collect_mst_percentage);
-  }
-  printf("\n========= Speedup =========\n");
-  printf(" nproc  ");
-  for (int i = 0; i < 10; i++) {
-    printf("| %6d%%    ", (i + 1) * 10);
-  }
-  printf("\n");
-
-  for (int i = 0; i < algo_times; i++) {
-    printf("  %3d   ", (int)pow(2, i));
-    for (int j = 0; j < 10; j++) {
-      double speedup = times[0][j].total_time / times[i][j].total_time;
-      printf("| %10.8f ", speedup);
-    }
-    printf("\n");
-  }
-  printf("\n");
-
-  printf("\n========= Efficiency =========\n");
-  printf(" nproc  ");
-  for (int i = 0; i < 10; i++) {
-    printf("| %6d%%    ", (i + 1) * 10);
-  }
-  printf("\n");
-
-  for (int i = 0; i < algo_times; i++) {
-    printf("  %3d   ", (int)pow(2, i));
-    for (int j = 0; j < 10; j++) {
-      double efficiency = (times[0][j].total_time / times[i][j].total_time) / pow(2, i);
-      printf("| %10.8f ", efficiency);
-    }
-    printf("\n");
-  }
-  printf("\n");
-}
+/******************************/
+/*   MAIN PROGRAM            */
+/******************************/
 
 int main(int argc, char* argv[]) {
   MPI_Init(&argc, &argv);
@@ -542,13 +569,6 @@ int main(int argc, char* argv[]) {
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
   create_mpi_edge_type();
-
-  int max_threads = omp_get_max_threads();
-  omp_set_num_threads(max_threads);
-  if (rank == 0){
-    printf("Max OMP threads: %d\n", max_threads);
-    fflush(stdout);
-  }
 
   int V = 0;
   int64_t E = 0;
@@ -574,11 +594,6 @@ int main(int argc, char* argv[]) {
   int algo_times = 1 + (int)log2(nproc);
   AlgoTimes times[algo_times][10];  // 10 graph densities from 10% to 100%
 
-  double total_start_time, total_end_time;
-  double sorting_start, sorting_end;
-  double kruskal_execution_start, kruskal_execution_end;
-  double collect_mst_start, collect_mst_end;
-
   get_argv(argc, argv, &V);
   int max_wgt = INT32_MAX / (V - 1);
 
@@ -588,7 +603,7 @@ int main(int argc, char* argv[]) {
   MPI_Bcast(&V, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
   // Graph density from 10% to 100%
-  for (int i = 1; i <= 10; i++) {    
+  for (int i = DENSITY_START; i <= DENSITY_END; i++) {
     if (rank == 0) {
       printf("===== Density: %d%% =====\n", i * 10);
       fflush(stdout);
@@ -632,15 +647,15 @@ int main(int argc, char* argv[]) {
       }
 
       total_start_time = MPI_Wtime();
-      sorting_start = total_start_time;
+      qsort_start = total_start_time;
 
       printf("Let's do qsort...\n");
       fflush(stdout);
 
       qsort(graph, E, sizeof(Edge), compare_edges);
 
-      sorting_end = MPI_Wtime();
-      kruskal_execution_start = sorting_end;
+      qsort_end = MPI_Wtime();
+      kruskal_execution_start = qsort_end;
 
       printf("Let's do kruskal...\n");
       fflush(stdout);
@@ -655,7 +670,7 @@ int main(int argc, char* argv[]) {
 
       result_mst_wgt = mst_weight;
       times[0][i - 1].distribute_unordered_graph_time = 0;
-      times[0][i - 1].qsort_time = sorting_end - sorting_start;
+      times[0][i - 1].qsort_time = qsort_end - qsort_start;
       times[0][i - 1].merge_graph_time = 0;
       times[0][i - 1].distribute_ordered_graph_time = 0;
       times[0][i - 1].kruskal_time = kruskal_execution_end - kruskal_execution_start;
@@ -679,8 +694,6 @@ int main(int argc, char* argv[]) {
         // Restore the original graph
         memcpy(graph, original_graph, sizeof(Edge) * E);
       }
-
-
 
       MPI_Barrier(MPI_COMM_WORLD);
 
@@ -710,16 +723,56 @@ int main(int argc, char* argv[]) {
 
       if (rank == 0) {
         total_start_time = MPI_Wtime();
-        sorting_start = total_start_time;
+        distribute_unordered_start = total_start_time;
+
         printf("Let's distribute the unordered graph...\n");
         fflush(stdout);
       }
-      
-      // pivot sort
-      send_counts[rank] = pivot_sort(graph, &local_graph, E, j, rank, active_comm, max_wgt);
+
+      distribute_data(graph, &local_graph, E, send_counts, displs, j, rank, active_comm);
+
       if (rank == 0) {
-        sorting_end = MPI_Wtime();
-        kruskal_execution_start = sorting_end;
+        distribute_unordered_end = MPI_Wtime();
+        merge_graph_start = distribute_unordered_end;
+
+        printf("Let's collect the ordered graph...\n");
+        fflush(stdout);
+      }
+
+      local_graph = (Edge*)realloc(local_graph, sizeof(Edge) * send_counts[rank]);
+      if (local_graph == NULL) {
+        printf("Memory allocation failed for local graph.\n");
+        MPI_Abort(MPI_COMM_WORLD, 1);
+      }
+      merge_graph(&local_graph, send_counts[rank], j, rank, active_comm);
+
+      if (rank == 0) {
+        merge_graph_end = MPI_Wtime();
+        qsort_start = merge_graph_end;
+
+        printf("Let's do qsort...\n");
+        fflush(stdout);
+      }
+
+      qsort(local_graph, send_counts[rank], sizeof(Edge), compare_edges);
+
+      if (rank == 0) {
+        memcpy(graph, local_graph, sizeof(Edge) * E);
+        free(local_graph);
+
+        qsort_end = MPI_Wtime();
+        distribute_ordered_start = qsort_end;
+
+        printf("Let's distribute the ordered graph...\n");
+        fflush(stdout);
+      }
+
+      // Distribute the data to the processes
+      distribute_data(graph, &local_graph, E, send_counts, displs, j, rank, active_comm);
+
+      if (rank == 0) {
+        distribute_ordered_end = MPI_Wtime();
+        kruskal_execution_start = distribute_ordered_end;
 
         printf("Let's do kruskal...\n");
         fflush(stdout);
@@ -747,10 +800,12 @@ int main(int argc, char* argv[]) {
         fflush(stdout);
 
         int run_index = (int)log2(j);
-        times[run_index][i - 1].distribute_unordered_graph_time = 0;
-        times[run_index][i - 1].qsort_time = sorting_end - sorting_start;
-        times[run_index][i - 1].merge_graph_time = 0;
-        times[run_index][i - 1].distribute_ordered_graph_time = 0;
+        times[run_index][i - 1].distribute_unordered_graph_time =
+            distribute_unordered_end - distribute_unordered_start;
+        times[run_index][i - 1].qsort_time = qsort_end - qsort_start;
+        times[run_index][i - 1].merge_graph_time = merge_graph_end - merge_graph_start;
+        times[run_index][i - 1].distribute_ordered_graph_time =
+            distribute_ordered_end - distribute_ordered_start;
         times[run_index][i - 1].kruskal_time = kruskal_execution_end - kruskal_execution_start;
         times[run_index][i - 1].collect_mst_time = collect_mst_end - collect_mst_start;
         times[run_index][i - 1].total_time = total_end_time - total_start_time;
@@ -780,10 +835,12 @@ int main(int argc, char* argv[]) {
     printf("\n\n");
     printf(" ========== Results ==========\n");
 
-    print_field(times, algo_times, "Distribute Unordered Graph Time", get_distribute_unordered_graph_time);
+    print_field(times, algo_times, "Distribute Unordered Graph Time",
+                get_distribute_unordered_graph_time);
     print_field(times, algo_times, "QSort Time", get_qsort_time);
     print_field(times, algo_times, "Merge Graph Time", get_merge_graph_time);
-    print_field(times, algo_times, "Distribute Ordered Graph Time", get_distribute_ordered_graph_time);
+    print_field(times, algo_times, "Distribute Ordered Graph Time",
+                get_distribute_ordered_graph_time);
     print_field(times, algo_times, "Kruskal Time", get_kruskal_time);
     print_field(times, algo_times, "Collect MST Time", get_collect_mst_time);
     print_field(times, algo_times, "Total Time", get_total_time);

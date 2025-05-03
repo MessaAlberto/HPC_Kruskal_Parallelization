@@ -1,3 +1,7 @@
+/******************************/
+/*   INCLUDES & DEFINES       */
+/******************************/
+
 #include <inttypes.h>
 #include <libgen.h>
 #include <limits.h>
@@ -8,6 +12,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+
+#define DENSITY_START 1  // 10% density
+#define DENSITY_END 10   // 100% density
+
+/******************************/
+/*   TYPEDEFS & GLOBAL DATA   */
+/******************************/
 
 typedef struct Edge {
   int u;
@@ -52,30 +63,6 @@ double get_total_time(AlgoTimes* times) { return times->total_time; }
 
 MPI_Datatype MPI_EDGE;
 
-int compare_edges(const void* a, const void* b) {
-  return ((Edge*)a)->weight - ((Edge*)b)->weight;
-}
-
-// Find the root of the set
-int find(Subset* sets, int i) {
-  if (sets[i].parent != i) {
-    sets[i].parent = find(sets, sets[i].parent);
-  }
-  return sets[i].parent;
-}
-
-// Union two sets
-void union_sets(Subset* sets, int root_u, int root_v) {
-  if (sets[root_u].rank < sets[root_v].rank) {
-    sets[root_u].parent = root_v;
-  } else if (sets[root_u].rank > sets[root_v].rank) {
-    sets[root_v].parent = root_u;
-  } else {
-    sets[root_v].parent = root_u;
-    sets[root_u].rank++;
-  }
-}
-
 void create_mpi_edge_type() {
   int block_lengths[3] = {1, 1, 1};
   MPI_Datatype types[3] = {MPI_INT, MPI_INT, MPI_INT};
@@ -88,6 +75,87 @@ void create_mpi_edge_type() {
   MPI_Type_create_struct(3, block_lengths, offsets, types, &MPI_EDGE);
   MPI_Type_commit(&MPI_EDGE);
 }
+
+/******************************/
+/*   TIMING & OUTPUT          */
+/******************************/
+
+void print_field(AlgoTimes times[10][10], int algo_times, const char* field_name,
+                 FieldGetter field) {
+  printf("%s\n", field_name);
+  printf(" nproc  ");
+  for (int i = DENSITY_START; i <= DENSITY_END; i++) {
+    printf("| %6d%%    ", i * 10);
+  }
+  printf("\n");
+
+  for (int i = 0; i < algo_times; i++) {
+    printf("  %3d   ", (int)pow(2, i));
+    for (int j = DENSITY_START - 1; j < DENSITY_END; j++) {
+      printf("| %10.8f ", field(&times[i][j]));
+    }
+    printf("\n");
+  }
+  printf("\n");
+}
+
+void print_evaluation(AlgoTimes times[10][10], int algo_times) {
+  printf("\n========= Task Evaluation on complete graph (%% of Total Time) =========\n");
+  printf(" nproc\n");
+
+  for (int i = 0; i < algo_times; i++) {
+    printf("  %3d   ", (int)pow(2, i));
+    double total = times[i][DENSITY_END - 1].total_time;
+
+    double bucket_percentage = (times[i][DENSITY_END - 1].bucket_time / total) * 100.0;
+    double distribute_percentage = (times[i][DENSITY_END - 1].distribute_time / total) * 100.0;
+    double qsort_percentage = (times[i][DENSITY_END - 1].qsort_time / total) * 100.0;
+    double kruskal_percentage = (times[i][DENSITY_END - 1].kruskal_time / total) * 100.0;
+    double collect_mst_percentage =
+        (times[i][DENSITY_END - 1].collect_mst_time / total) * 100.0;
+
+    printf("| BKT %6.2f%% | DIS %6.2f%% | QS %6.2f%% | K %6.2f%% | CM %6.2f%%\n",
+           bucket_percentage, distribute_percentage, qsort_percentage, kruskal_percentage,
+           collect_mst_percentage);
+  }
+  printf("\n========= Speedup =========\n");
+  printf(" nproc  ");
+  for (int i = DENSITY_START; i <= DENSITY_END; i++) {
+    printf("| %6d%%    ", i * 10);
+  }
+  printf("\n");
+
+  for (int i = 0; i < algo_times; i++) {
+    printf("  %3d   ", (int)pow(2, i));
+    for (int j = DENSITY_START - 1; j < DENSITY_END; j++) {
+      double speedup = times[0][j].total_time / times[i][j].total_time;
+      printf("| %10.8f ", speedup);
+    }
+    printf("\n");
+  }
+  printf("\n");
+
+  printf("\n========= Efficiency =========\n");
+  printf(" nproc  ");
+  for (int i = DENSITY_START; i <= DENSITY_END; i++) {
+    printf("| %6d%%    ", i * 10);
+  }
+  printf("\n");
+
+  for (int i = 0; i < algo_times; i++) {
+    printf("  %3d   ", (int)pow(2, i));
+    for (int j = DENSITY_START - 1; j < DENSITY_END; j++) {
+      double efficiency = (times[0][j].total_time / times[i][j].total_time) / pow(2, i);
+      printf("| %10.8f ", efficiency);
+    }
+    printf("\n");
+  }
+  printf("\n");
+}
+
+/******************************/
+/*   GRAPH GENERATION         */
+/******************************/
 
 void get_argv(int argc, char* argv[], int* V) {
   if (argc != 2) {
@@ -193,6 +261,34 @@ void sparse_graph(Edge** graph, int V, int density, int max_wgt) {
   free(nodes);
 }
 
+/******************************/
+/*   KRUSKAL & UNION-FIND     */
+/******************************/
+
+int compare_edges(const void* a, const void* b) {
+  return ((Edge*)a)->weight - ((Edge*)b)->weight;
+}
+
+// Find the root of the set
+int find(Subset* sets, int i) {
+  if (sets[i].parent != i) {
+    sets[i].parent = find(sets, sets[i].parent);
+  }
+  return sets[i].parent;
+}
+
+// Union two sets
+void union_sets(Subset* sets, int root_u, int root_v) {
+  if (sets[root_u].rank < sets[root_v].rank) {
+    sets[root_u].parent = root_v;
+  } else if (sets[root_u].rank > sets[root_v].rank) {
+    sets[root_v].parent = root_u;
+  } else {
+    sets[root_v].parent = root_u;
+    sets[root_u].rank++;
+  }
+}
+
 void kruskal(Edge* graph, int V, int64_t E, Edge** mst, int* mst_edges, int* mst_weight,
              Subset* sets) {
   for (int i = 0; i < V; i++) {
@@ -228,6 +324,10 @@ void kruskal(Edge* graph, int V, int64_t E, Edge** mst, int* mst_edges, int* mst
   }
 }
 
+/******************************/
+/*  PIVOT SORT & MST COLLECT  */
+/******************************/
+
 int64_t pivot_sort(Edge* graph, Edge** local_graph, int64_t E, int nproc, int rank,
                    MPI_Comm active_comm, int max_wgt) {
   int64_t local_edge_count = 0;
@@ -253,7 +353,7 @@ int64_t pivot_sort(Edge* graph, Edge** local_graph, int64_t E, int nproc, int ra
     for (int64_t i = 0; i < E; i++) {
       int bucket = graph[i].weight / bucket_width;
       if (bucket >= nproc) bucket = nproc - 1;
-      
+
       if (counts[bucket] >= bucket_caps[bucket]) {
         bucket_caps[bucket] *= 2;
         buckets[bucket] = realloc(buckets[bucket], bucket_caps[bucket] * sizeof(Edge));
@@ -279,7 +379,8 @@ int64_t pivot_sort(Edge* graph, Edge** local_graph, int64_t E, int nproc, int ra
     local_edge_count = counts[0];
     *local_graph = malloc(local_edge_count * sizeof(Edge));
     memcpy(*local_graph, buckets[0], local_edge_count * sizeof(Edge));
-    
+
+    for (int i = 0; i < nproc; i++) free(buckets[i]);
     free(buckets);
     free(bucket_caps);
 
@@ -296,8 +397,11 @@ int64_t pivot_sort(Edge* graph, Edge** local_graph, int64_t E, int nproc, int ra
 
     int64_t received = 0;
     while (received < local_edge_count) {
-      int chunk_size = (local_edge_count - received > INT_MAX) ? INT_MAX : (int)(local_edge_count - received);
-      MPI_Recv(*local_graph + received, chunk_size, MPI_EDGE, 0, 1, active_comm, MPI_STATUS_IGNORE);
+      int chunk_size = (local_edge_count - received > INT_MAX)
+                           ? INT_MAX
+                           : (int)(local_edge_count - received);
+      MPI_Recv(*local_graph + received, chunk_size, MPI_EDGE, 0, 1, active_comm,
+               MPI_STATUS_IGNORE);
       received += chunk_size;
     }
   }
@@ -357,79 +461,9 @@ void collect_mst(int rank, int nproc, int V, Edge** local_mst, int* mst_edges, i
   }
 }
 
-void print_field(AlgoTimes times[10][10], int algo_times, const char* field_name,
-                 FieldGetter field) {
-  printf("%s\n", field_name);
-  printf(" nproc  ");
-  for (int i = 0; i < 10; i++) {
-    printf("| %6d%%    ", (i + 1) * 10);
-  }
-  printf("\n");
-
-  for (int i = 0; i < algo_times; i++) {
-    printf("  %3d   ", (int)pow(2, i));
-    for (int j = 0; j < 10; j++) {
-      printf("| %10.8f ", field(&times[i][j]));
-    }
-    printf("\n");
-  }
-  printf("\n");
-}
-
-void print_evaluation(AlgoTimes times[10][10], int algo_times) {
-  printf("\n========= Task Evaluation on complete graph (%% of Total Time) =========\n");
-  printf(" nproc\n");
-
-  for (int i = 0; i < algo_times; i++) {
-    printf("  %3d   ", (int)pow(2, i));
-    double total = times[i][9].total_time;
-
-    double bucket_percentage =
-        (times[i][9].bucket_time / total) * 100.0;
-    double distribute_percentage =
-        (times[i][9].distribute_time / total) * 100.0;
-    double qsort_percentage = (times[i][9].qsort_time / total) * 100.0;
-    double kruskal_percentage = (times[i][9].kruskal_time / total) * 100.0;
-    double collect_mst_percentage = (times[i][9].collect_mst_time / total) * 100.0;
-
-    printf("| BKT %6.2f%% | DIS %6.2f%% | QS %6.2f%% | K %6.2f%% | CM %6.2f%%\n",
-           bucket_percentage, distribute_percentage,
-           qsort_percentage, kruskal_percentage, collect_mst_percentage);
-  }
-  printf("\n========= Speedup =========\n");
-  printf(" nproc  ");
-  for (int i = 0; i < 10; i++) {
-    printf("| %6d%%    ", (i + 1) * 10);
-  }
-  printf("\n");
-
-  for (int i = 0; i < algo_times; i++) {
-    printf("  %3d   ", (int)pow(2, i));
-    for (int j = 0; j < 10; j++) {
-      double speedup = times[0][j].total_time / times[i][j].total_time;
-      printf("| %10.8f ", speedup);
-    }
-    printf("\n");
-  }
-  printf("\n");
-
-  printf("\n========= Efficiency =========\n");
-  printf(" nproc  ");
-  for (int i = 0; i < 10; i++) {
-    printf("| %6d%%    ", (i + 1) * 10);
-  }
-  printf("\n");
-
-  for (int i = 0; i < algo_times; i++) {
-    printf("  %3d   ", (int)pow(2, i));
-    for (int j = 0; j < 10; j++) {
-      double efficiency = (times[0][j].total_time / times[i][j].total_time) / pow(2, i);
-      printf("| %10.8f ", efficiency);
-    }
-    printf("\n");
-  }
-  printf("\n");
-}
+/******************************/
+/*   MAIN PROGRAM            */
+/******************************/
 
 int main(int argc, char* argv[]) {
   MPI_Init(&argc, &argv);
@@ -473,7 +507,7 @@ int main(int argc, char* argv[]) {
   MPI_Bcast(&V, 1, MPI_INT, 0, MPI_COMM_WORLD);
 
   // Graph density from 10% to 100%
-  for (int i = 1; i <= 10; i++) {
+  for (int i = DENSITY_START; i <= DENSITY_END; i++) {
     if (rank == 0) {
       printf("===== Density: %d%% =====\n", i * 10);
       fflush(stdout);
@@ -609,7 +643,7 @@ int main(int argc, char* argv[]) {
       kruskal(local_graph, V, send_counts[rank], &local_mst, &mst_edges, &mst_weight, sets);
 
       if (rank == 0) {
-        kruskal_execution_end = MPI_Wtime();        
+        kruskal_execution_end = MPI_Wtime();
         collect_mst_start = kruskal_execution_end;
 
         printf("Let's collect local mst...\n");

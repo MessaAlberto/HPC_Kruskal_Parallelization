@@ -1,32 +1,35 @@
-OUTPUT_DIR = ../output
-ERROR_DIR = ../output_err
+# Directories
+BIN_FOLDER := bin
+OUT_FOLDER := output
+ERR_FOLDER := output_err
+SCRIPT_FOLDER := script
 
+# Files
+MAIN_SRC = kruskal_pivotSort.c
+# MAIN_SRC = kruskal_mergeSort.c
+MAIN_BIN = kruskal
+
+# Compiler and flags
 CC = mpicc
-CFLAGS = -Wall -Wextra -g -std=c99 -fopenmp
+CFLAGS = -Wall -Wextra -g -std=c99
 
-OUTPUT = kruskal.out
-SRC = kruskal.c
-OBJS = $(SRC:.c=.o)
+# Rules
+all: env $(BIN_FOLDER)/$(MAIN_BIN) test
 
-all: env test
+env: create_dir
+	chmod +x $(SCRIPT_FOLDER)/*.sh
 
-env: create_output_dir $(OUTPUT)
-	chmod +x test.sh qsub_dir.sh
+create_dir:
+	mkdir -p $(OUT_FOLDER) $(ERR_FOLDER) $(BIN_FOLDER)
 
-create_output_dir:
-	mkdir -p $(OUTPUT_DIR) $(ERROR_DIR)
-
-$(OUTPUT): $(OBJS)
+$(BIN_FOLDER)/$(MAIN_BIN): $(MAIN_SRC)
 	module load mpich-3.2 && $(CC) $(CFLAGS) -o $@ $^ -lm
 
-%.o: %.c
-	module load mpich-3.2 && $(CC) $(CFLAGS) -c $< -o $@
-
-test: 
-	./test.sh
+test:
+	$(SCRIPT_FOLDER)/test.sh
 
 clean: cl_test
-	rm -f $(OUTPUT) $(OBJS)
+	rm -f $(BIN_FOLDER)/* || true
 
 cl_test:
-	rm -f $(OUTPUT_DIR)/*.out $(ERROR_DIR)/*.err || true
+	rm -f $(OUT_FOLDER)/*.out $(ERR_FOLDER)/*.err || true
