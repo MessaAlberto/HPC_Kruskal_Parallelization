@@ -4,3 +4,6 @@
 *.o
 *.out
 *.err
+
+.DS_Store
+*/bin/
