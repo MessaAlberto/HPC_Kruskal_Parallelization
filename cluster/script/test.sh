@@ -1,8 +1,8 @@
 #!/bin/bash
 
-# Test graph of 1024 to 131072 nodes
+# Test graph of 1024 to 65536 nodes
 v_start=1024
-v_end=131072
+v_end=65536
 
 v=$v_start
 while [ $v -le $v_end ]; do

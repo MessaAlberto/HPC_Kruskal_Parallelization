@@ -8,8 +8,8 @@ MST_FOLDER := ../mst
 # Compiler, flags, and linker
 CC := gcc
 CFLAGS := -Wall -Wextra -g -I$(INC_FOLDER)
-MPIFLAGS := -I "C:/Program Files (x86)/Microsoft SDKs/MPI/Include"
-MPILIB := -L "C:/Program Files (x86)/Microsoft SDKs/MPI/Lib/x64" -lmsmpi
+MPIFLAGS := -I "your_path/MPI/Include"
+MPILIB := -L "your_path/MPI/Lib/x64" -lmsmpi
 
 # Files
 SEQ_MAIN := seq_kruskal.c
