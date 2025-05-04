@@ -461,15 +461,16 @@ void distribute_data(Edge* graph, Edge** local_graph, int64_t E, int64_t* send_c
   free(displs_int);
 }
 
-void merge_graph(Edge** local_graph, int64_t send_counts, int nproc, int rank,
+void merge_graph(Edge** local_graph, int64_t send_count, int nproc, int rank,
                  MPI_Comm active_comm) {
   int power = 1;
   while (nproc > 1) {
     if ((rank / power) % 2 == 0) {
       int recv_rank = rank + power;
-      int recv_count = 0;
+      int64_t recv_count = 0;
 
-      MPI_Recv(&recv_count, 1, MPI_INT, recv_rank, 0, active_comm, MPI_STATUS_IGNORE);
+      MPI_Recv(&recv_count, 1, MPI_LONG_LONG_INT, recv_rank, 0, active_comm,
+               MPI_STATUS_IGNORE);
 
       Edge* recv_graph = (Edge*)malloc(sizeof(Edge) * recv_count);
       if (recv_graph == NULL) {
@@ -477,19 +478,26 @@ void merge_graph(Edge** local_graph, int64_t send_counts, int nproc, int rank,
         MPI_Abort(MPI_COMM_WORLD, 1);
       }
 
-      MPI_Recv(recv_graph, recv_count * sizeof(Edge), MPI_BYTE, recv_rank, 0, active_comm,
-               MPI_STATUS_IGNORE);
-      send_counts += recv_count;
-      (*local_graph) = (Edge*)realloc(*local_graph, sizeof(Edge) * send_counts);
+      int64_t received = 0;
+      while (received < recv_count) {
+        int64_t to_receive =
+            (recv_count - received) > INT_MAX ? INT_MAX : (int)(recv_count - received);
+        MPI_Recv(recv_graph + received, to_receive, MPI_EDGE, recv_rank, 0, active_comm,
+                 MPI_STATUS_IGNORE);
+        received += to_receive;
+      }
+      send_count += recv_count;
+
+      (*local_graph) = (Edge*)realloc(*local_graph, sizeof(Edge) * send_count);
       if (*local_graph == NULL) {
         printf("Memory allocation failed for local graph.\n");
         MPI_Abort(MPI_COMM_WORLD, 1);
       }
 
       // Inverted merge
-      int i = send_counts - 1;
-      int j = send_counts - recv_count - 1;
-      int k = recv_count - 1;
+      int64_t i = send_count - 1;
+      int64_t j = send_count - recv_count - 1;
+      int64_t k = recv_count - 1;
 
       while (k >= 0) {
         if (j >= 0 && (*local_graph)[j].weight > recv_graph[k].weight) {
@@ -501,8 +509,14 @@ void merge_graph(Edge** local_graph, int64_t send_counts, int nproc, int rank,
       free(recv_graph);
     } else {
       int send_rank = rank - power;
-      MPI_Send(&send_counts, 1, MPI_INT, send_rank, 0, active_comm);
-      MPI_Send(*local_graph, send_counts * sizeof(Edge), MPI_BYTE, send_rank, 0, active_comm);
+      MPI_Send(&send_count, 1, MPI_LONG_LONG_INT, send_rank, 0, active_comm);
+
+      int64_t offset = 0;
+      while (offset < send_count) {
+        int64_t to_send = (send_count - offset) > INT_MAX ? INT_MAX : (int)(send_count - offset);
+        MPI_Send(*local_graph + offset, to_send, MPI_EDGE, send_rank, 0, active_comm);
+        offset += to_send;
+      }
       break;
     }
     power *= 2;
@@ -729,11 +743,23 @@ int main(int argc, char* argv[]) {
         fflush(stdout);
       }
 
+      // Distribute the unordered graph
       distribute_data(graph, &local_graph, E, send_counts, displs, j, rank, active_comm);
 
       if (rank == 0) {
         distribute_unordered_end = MPI_Wtime();
-        merge_graph_start = distribute_unordered_end;
+        qsort_start = distribute_unordered_end;
+
+        printf("Let's do qsort...\n");
+        fflush(stdout);
+      }
+
+      // Sort the local graph
+      qsort(local_graph, send_counts[rank], sizeof(Edge), compare_edges);
+
+      if (rank == 0) {
+        qsort_end = MPI_Wtime();
+        merge_graph_start = qsort_end;
 
         printf("Let's collect the ordered graph...\n");
         fflush(stdout);
@@ -744,30 +770,21 @@ int main(int argc, char* argv[]) {
         printf("Memory allocation failed for local graph.\n");
         MPI_Abort(MPI_COMM_WORLD, 1);
       }
+      // Merge the local graphs
       merge_graph(&local_graph, send_counts[rank], j, rank, active_comm);
-
-      if (rank == 0) {
-        merge_graph_end = MPI_Wtime();
-        qsort_start = merge_graph_end;
-
-        printf("Let's do qsort...\n");
-        fflush(stdout);
-      }
-
-      qsort(local_graph, send_counts[rank], sizeof(Edge), compare_edges);
 
       if (rank == 0) {
         memcpy(graph, local_graph, sizeof(Edge) * E);
         free(local_graph);
 
-        qsort_end = MPI_Wtime();
-        distribute_ordered_start = qsort_end;
+        merge_graph_end = MPI_Wtime();
+        distribute_ordered_start = merge_graph_end;
 
         printf("Let's distribute the ordered graph...\n");
         fflush(stdout);
       }
 
-      // Distribute the data to the processes
+      // Distribute the ordered graph
       distribute_data(graph, &local_graph, E, send_counts, displs, j, rank, active_comm);
 
       if (rank == 0) {
