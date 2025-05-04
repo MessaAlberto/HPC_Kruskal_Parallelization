@@ -8,22 +8,16 @@ void open_file(FILE** fp, const char* filename, const char* mode) {
 }
 
 // Get the number of vertices and maximum weight from the command line
-void get_params(int argc, char* argv[], int* V, int* max_wgt) {
-  if (argc != 3) {
-    printf("Usage: ./graph_generator <number_of_vertices> <max_weight>\n");
+void get_params(int argc, char* argv[], int* V) {
+  if (argc != 2) {
+    printf("Usage: ./graph_generator <number_of_vertices>\n");
     exit(1);
   }
 
   *V = atoi(argv[1]);
-  *max_wgt = atoi(argv[2]);
 
   if (*V <= 0) {
     printf("Number of vertices must be greater than 0.\n");
-    exit(1);
-  }
-
-  if (*max_wgt <= 0) {
-    printf("Maximum weight must be greater than 0.\n");
     exit(1);
   }
 }

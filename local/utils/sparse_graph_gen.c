@@ -61,7 +61,9 @@ int main(int argc, char* argv[]) {
   char filename[100];
   FILE* fp;
 
-  get_params(argc, argv, &V, &max_wgt);
+  get_params(argc, argv, &V);
+
+  max_wgt = INT32_MAX / (V - 1);
 
 	srand(time(NULL));
 	// Add random number of edges to the already connected graph

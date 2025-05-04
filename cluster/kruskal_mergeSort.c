@@ -513,7 +513,8 @@ void merge_graph(Edge** local_graph, int64_t send_count, int nproc, int rank,
 
       int64_t offset = 0;
       while (offset < send_count) {
-        int64_t to_send = (send_count - offset) > INT_MAX ? INT_MAX : (int)(send_count - offset);
+        int64_t to_send =
+            (send_count - offset) > INT_MAX ? INT_MAX : (int)(send_count - offset);
         MPI_Send(*local_graph + offset, to_send, MPI_EDGE, send_rank, 0, active_comm);
         offset += to_send;
       }

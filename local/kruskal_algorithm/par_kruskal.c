@@ -3,7 +3,9 @@
 #include "disjoint_set.h"
 #include "graph_utils.h"
 
+#define MAX_WGT INT32_MAX
 MPI_Datatype MPI_EDGE;
+
 
 void create_mpi_edge_type() {
   int block_lengths[3] = {1, 1, 1};
@@ -32,41 +34,7 @@ void read_input(int argc, char* argv[], Edge** graph, int* V, int* E) {
   }
 }
 
-void distibute_data(int E, int nproc, int* sendCounts, int* displs, Edge* graph,
-                    Edge** local_graph, int rank) {
-  if (E < nproc) {
-    printf("Error: more processes than edges.\n");
-    MPI_Abort(MPI_COMM_WORLD, 1);
-  }
-
-  int base_size = E / nproc;
-  int extra = E % nproc;
-
-  int offset = 0;
-  for (int i = 0; i < nproc; i++) {
-    sendCounts[i] = base_size + (i < extra ? 1 : 0);
-    displs[i] = offset;
-    offset += sendCounts[i];
-  }
-
-  int local_E = sendCounts[rank];
-  *local_graph = (Edge*)malloc(sizeof(Edge) * local_E);
-  if (*local_graph == NULL) {
-    printf("Memory allocation failed for local graph.\n");
-    MPI_Abort(MPI_COMM_WORLD, 1);
-  }
-
-  MPI_Scatterv(graph, sendCounts, displs, MPI_EDGE, *local_graph, local_E,
-               MPI_EDGE, 0, MPI_COMM_WORLD);
-
-  if (*local_graph == NULL) {
-    printf("Error distributing data.\n");
-    MPI_Abort(MPI_COMM_WORLD, 1);
-  }
-}
-
-Edge* kruskal(Edge* graph, int V, int E, int* mst_weight, int* mst_edges,
-              Subset* sets) {
+Edge* kruskal(Edge* graph, int V, int E, int* mst_weight, int* mst_edges, Subset* sets) {
   if (sets == NULL) {
     printf("Memory allocation failed.\n");
     return NULL;
@@ -102,8 +70,8 @@ Edge* kruskal(Edge* graph, int V, int E, int* mst_weight, int* mst_edges,
   return mst;
 }
 
-void kruskal_mst(Edge* local_graph, int V, int local_E, int* mst_weight,
-                 int* mst_edges, Subset* sets, Edge** local_mst) {
+void kruskal_mst(Edge* local_graph, int V, int local_E, int* mst_weight, int* mst_edges,
+                 Subset* sets, Edge** local_mst) {
   *local_mst = kruskal(local_graph, V, local_E, mst_weight, mst_edges, sets);
   if (*local_mst == NULL) {
     printf("Error computing MST.\n");
@@ -111,8 +79,77 @@ void kruskal_mst(Edge* local_graph, int V, int local_E, int* mst_weight,
   }
 }
 
-void collect_mst(int rank, int nproc, int V, int* mst_edges, Edge** local_mst,
-                 int* mst_weight, Subset* sets) {
+int pivot_sort(Edge* graph, Edge** local_graph, int E, int nproc, int rank,
+               MPI_Comm active_comm, int max_wgt) {
+  int local_edge_count = 0;
+  int* counts = NULL;
+
+  if (rank == 0) {
+    Edge** buckets = malloc(nproc * sizeof(Edge*));
+    counts = calloc(nproc, sizeof(int));
+    int* bucket_caps = calloc(nproc, sizeof(int));
+    int bucket_size = (E / nproc) + 1;
+
+    for (int i = 0; i < nproc; i++) {
+      buckets[i] = malloc(bucket_size * sizeof(Edge));
+      bucket_caps[i] = bucket_size;
+      counts[i] = 0;
+    }
+
+    int bucket_width = max_wgt / nproc;
+    if (bucket_width == 0) bucket_width = 1;
+
+    for (int i = 0; i < E; i++) {
+      int bucket = graph[i].weight / bucket_width;
+      if (bucket >= nproc) bucket = nproc - 1;
+
+      if (counts[bucket] >= bucket_caps[bucket]) {
+        bucket_caps[bucket] *= 2;
+        buckets[bucket] = realloc(buckets[bucket], bucket_caps[bucket] * sizeof(Edge));
+      }
+      buckets[bucket][counts[bucket]++] = graph[i];
+    }
+
+    for (int i = 1; i < nproc; i++) {
+      int count = counts[i];
+      MPI_Send(&count, 1, MPI_LONG_LONG_INT, i, 0, active_comm);
+      MPI_Send(buckets[i], count, MPI_EDGE, i, 1, active_comm);
+    }
+
+    local_edge_count = counts[0];
+    *local_graph = malloc(local_edge_count * sizeof(Edge));
+    memcpy(*local_graph, buckets[0], local_edge_count * sizeof(Edge));
+
+    for (int i = 0; i < nproc; i++) free(buckets[i]);
+    free(buckets);
+    free(bucket_caps);
+  } else {
+    MPI_Recv(&local_edge_count, 1, MPI_LONG_LONG_INT, 0, 0, active_comm, MPI_STATUS_IGNORE);
+    *local_graph = malloc(local_edge_count * sizeof(Edge));
+    if (*local_graph == NULL) {
+      printf("Memory allocation failed for local graph.\n");
+      fflush(stdout);
+      MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+
+    MPI_Recv(*local_graph, local_edge_count, MPI_EDGE, 0, 1, active_comm, MPI_STATUS_IGNORE);
+
+    if (*local_graph == NULL) {
+      printf("Error receiving local graph.\n");
+      fflush(stdout);
+      MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+  }
+
+  qsort(*local_graph, local_edge_count, sizeof(Edge), compare_edges);
+  if (rank == 0) {
+    free(counts);
+  }
+  return local_edge_count;
+}
+
+void collect_mst(int rank, int nproc, int V, int* mst_edges, Edge** local_mst, int* mst_weight,
+                 Subset* sets) {
   int power = 1;
   while (nproc > 1) {
     if ((rank / power) % 2 == 0) {
@@ -162,9 +199,8 @@ int main(int argc, char* argv[]) {
 
   create_mpi_edge_type();
 
-  double qsort_start_time, qsort_end_time;
+  double pivotSort_start_time, pivotSort_end_time;
   double alg_start_time, alg_end_time;
-  double distribute_start_time, distribute_end_time;
   double krustal_start_time, krustal_end_time;
   double collect_start_time, collect_end_time;
 
@@ -172,7 +208,7 @@ int main(int argc, char* argv[]) {
   int mst_weight = 0, mst_edges = 0;
   Edge* graph = NULL;
   Edge* local_graph;
-  int sendCounts[nproc], displs[nproc];
+  int sendCounts[nproc];
   Subset* sets;
   Edge* local_mst = NULL;
 
@@ -196,30 +232,23 @@ int main(int argc, char* argv[]) {
   // Start the algorithm doing the qsort
   if (rank == 0) {
     alg_start_time = MPI_Wtime();
-    qsort_start_time = MPI_Wtime();
-
-    qsort(graph, E, sizeof(Edge), compare_edges);
-
-    qsort_end_time = MPI_Wtime();
-    distribute_start_time = MPI_Wtime();
+    pivotSort_start_time = alg_start_time;
   }
 
-  // Distribute the data to the processes
-  distibute_data(E, nproc, sendCounts, displs, graph, &local_graph, rank);
+  sendCounts[rank] = pivot_sort(graph, &local_graph, E, nproc, rank, MPI_COMM_WORLD, MAX_WGT);
 
   if (rank == 0) {
-    distribute_end_time = MPI_Wtime();
+    pivotSort_end_time = MPI_Wtime();
+    krustal_start_time = pivotSort_end_time;
     free(graph);
-    krustal_start_time = MPI_Wtime();
   }
 
   // Compute the local MST
-  kruskal_mst(local_graph, V, sendCounts[rank], &mst_weight, &mst_edges, sets,
-              &local_mst);
+  kruskal_mst(local_graph, V, sendCounts[rank], &mst_weight, &mst_edges, sets, &local_mst);
 
   if (rank == 0) {
     krustal_end_time = MPI_Wtime();
-    collect_start_time = MPI_Wtime();
+    collect_start_time = krustal_end_time;
   }
 
   // Collect the MST from all the processes
@@ -227,7 +256,7 @@ int main(int argc, char* argv[]) {
 
   if (rank == 0) {
     collect_end_time = MPI_Wtime();
-    alg_end_time = MPI_Wtime();
+    alg_end_time = collect_end_time;
 
     // Write the output
     FILE* out_fp = fopen(output_filename, "w");
@@ -238,20 +267,15 @@ int main(int argc, char* argv[]) {
 
     fprintf(out_fp, "%d %d %d\n", V, mst_edges, mst_weight);
     for (int i = 0; i < mst_edges; i++) {
-      fprintf(out_fp, "%d %d %d\n", local_mst[i].u, local_mst[i].v,
-              local_mst[i].weight);
+      fprintf(out_fp, "%d %d %d\n", local_mst[i].u, local_mst[i].v, local_mst[i].weight);
     }
 
     fclose(out_fp);
 
     // Print time information
-    printf("Qsort time: %.6f seconds\n", qsort_end_time - qsort_start_time);
-    printf("Distribute time: %.6f seconds\n",
-           distribute_end_time - distribute_start_time);
-    printf("Kruskal time: %.6f seconds\n",
-           krustal_end_time - krustal_start_time);
-    printf("Collect time: %.6f seconds\n",
-           collect_end_time - collect_start_time);
+    printf("PivotSort time: %.6f seconds\n", pivotSort_end_time - pivotSort_start_time);
+    printf("Kruskal time: %.6f seconds\n", krustal_end_time - krustal_start_time);
+    printf("Collect time: %.6f seconds\n", collect_end_time - collect_start_time);
     printf("Tot algorithm time: %.6f seconds\n", alg_end_time - alg_start_time);
   }
 
