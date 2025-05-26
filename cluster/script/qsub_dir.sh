@@ -8,4 +8,4 @@ module load mpich-3.2
 
 DIR=${PBS_O_WORKDIR}
 
-mpiexec -n 512 "${PBS_O_WORKDIR}/bin/kruskal" $V
+mpiexec -n 512 "${DIR}/bin/kruskal" $V
